@@ -1,0 +1,2 @@
+faust-streaming==0.10.14
+confluent-kafka==2.3.0
