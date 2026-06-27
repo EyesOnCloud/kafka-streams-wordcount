@@ -19,7 +19,7 @@ Both consume orders.raw, process independently.
 import json
 import signal
 import sys
-from confluent_kafka import Consumer, Producer, KafkaError
+from confluent_kafka import Consumer, Producer, KafkaError,  KafkaException
 from topology.orders_pipeline import apply_filter, apply_enrich, apply_flat_map
 from config.kafka_config_updated import (
     KAFKA_BROKER,
@@ -28,8 +28,8 @@ from config.kafka_config_updated import (
     ORDERS_LINE_ITEMS_TOPIC,
     ORDERS_APP_ID,
 )
-
 shutdown_flag = False
+messages_processed = False
 
 def handle_shutdown(signum, frame):
     global shutdown_flag
@@ -49,15 +49,26 @@ def on_assign(consumer, partitions):
     print(f"[ORDERS-WORKER] Owns {len(partitions)} partition(s) of {ORDERS_RAW_TOPIC}")
 
 def on_revoke(consumer, partitions):
+    global messages_processed
+
     nums = [p.partition for p in partitions]
+
     print(f"\n[ORDERS-WORKER] PARTITIONS REVOKED: {nums}")
+
+    # No offsets yet? Nothing to commit.
+    if not messages_processed:
+        print("[ORDERS-WORKER] No offsets stored — skipping commit")
+        return
+
     try:
         consumer.commit(asynchronous=False)
-    except KafkaError as e:
-        # _NO_OFFSET = no messages consumed yet on these partitions — safe ignore
-        if e.args[0].code() != KafkaError._NO_OFFSET:
-            print(f"[ORDERS-WORKER] Commit error on revoke: {e}")
+        print("[ORDERS-WORKER] Offsets committed successfully")
 
+    except KafkaException as e:
+        err = e.args[0]
+
+        if err.code() != KafkaError._NO_OFFSET:
+            print(f"[ORDERS-WORKER] Commit error on revoke: {err}")
 def on_lost(consumer, partitions):
     nums = [p.partition for p in partitions]
     print(f"\n[ORDERS-WORKER] PARTITIONS LOST (unclean): {nums}")
@@ -110,14 +121,15 @@ try:
                 continue
             print(f"[ERROR] {msg.error()}")
             continue
-
         try:
             order = json.loads(msg.value().decode('utf-8'))
+
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             print(f"[PARSE ERROR] partition={msg.partition()} offset={msg.offset()} err={e}")
             consumer.commit(asynchronous=False)
             continue
 
+        messages_processed = True
         order_id = order.get('order_id', 'UNKNOWN')
         amount = float(order.get('amount', 0))
 
@@ -174,10 +186,19 @@ try:
 
         producer.poll(0)
         consumer.commit(asynchronous=False)
-
 finally:
     producer.flush()
-    consumer.close()
+
+    try:
+        consumer.unsubscribe()
+    except Exception:
+        pass
+
+    try:
+        consumer.close()
+    except KafkaException:
+        pass
+
     print(f"\n[ORDERS-WORKER] Stopped cleanly.")
     print(f"[ORDERS-WORKER] Pipeline 1 — passed filter : {pipeline1_passed}")
     print(f"[ORDERS-WORKER] Pipeline 1 — filtered out  : {pipeline1_filtered}")
