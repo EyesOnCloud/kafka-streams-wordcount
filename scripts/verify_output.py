@@ -8,6 +8,7 @@ import time
 from collections import defaultdict
 from confluent_kafka import Consumer, KafkaError
 
+
 # 3-broker bootstrap — connects via whichever broker is available
 BOOTSTRAP_SERVERS = '192.168.100.21:9092,192.168.100.22:9092,192.168.100.23:9092'
 OUTPUT_TOPIC = 'word-count-output'
@@ -58,10 +59,11 @@ try:
             value = msg.value().decode('utf-8')
             word, count_str = value.split(':', 1)
             count = int(count_str)
+
+            # overwrite latest count (correct for streaming aggregation)
             word_counts[word] = count
             messages_read += 1
 
-            # Show which broker partition this came from
             print(f"  [{time.strftime('%H:%M:%S')}] "
                   f"partition={msg.partition()} "
                   f"UPDATE: '{word}' = {count}")
@@ -72,9 +74,11 @@ try:
 except KeyboardInterrupt:
     print(f"\nFINAL WORD COUNTS:")
     print("=" * 50)
+
     for word, count in sorted(word_counts.items(), key=lambda x: x[1], reverse=True):
         bar = '█' * min(count, 40)
         print(f"  {word:<20} {count:>5}  {bar}")
+
     print(f"\nUnique words: {len(word_counts)}")
     print(f"Total updates: {messages_read}")
 
