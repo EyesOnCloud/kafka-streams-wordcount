@@ -21,7 +21,7 @@ import signal
 import sys
 from confluent_kafka import Consumer, Producer, KafkaError
 from topology.orders_pipeline import apply_filter, apply_enrich, apply_flat_map
-from config.kafka_config import (
+from config.kafka_config_updated import (
     KAFKA_BROKER,
     ORDERS_RAW_TOPIC,
     ORDERS_HIGH_VALUE_TOPIC,
